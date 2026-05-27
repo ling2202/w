@@ -31,11 +31,6 @@ const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
 /* ─── UTILITIES ─────────────────────────────────── */
-function localDateStr(d) {
-  const dt = d || new Date();
-  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-}
-
 function getWeekKey(dateStr) {
   // Week runs Sat–Fri. Key = "W-YYYY-MM-DD" of that Saturday.
   const d = new Date(dateStr + "T00:00:00");
@@ -56,7 +51,7 @@ function weekLabel(wk) {
 }
 
 function currentWeekKey() {
-  return getWeekKey(localDateStr());
+  return getWeekKey(new Date().toISOString().split('T')[0]);
 }
 
 function fmt(n) { return '$' + Number(n).toFixed(2); }
@@ -109,16 +104,20 @@ window.togglePaidSection = function() {
   if (chev) chev.textContent = open ? '▼' : '▲';
 };
 
-window.savePaidStatus = function() {
+window.savePaidStatus = async function() {
   const status = document.getElementById('paid-status-select').value;
   const date   = document.getElementById('paid-date-input').value;
-  localStorage.setItem('paidStatus_' + viewWeek, JSON.stringify({ status, date }));
-  updatePaidUI(status, date);
+  await set(ref(db, `paidStatus/${viewWeek}`), { status, date });
+  // UI will update via onValue listener
 };
+
+let paidStatusUnsubscribe = null;
 
 function loadPaidStatus(wk) {
   const section = document.getElementById('paid-status-section');
   if (!section) return;
+
+  // check if there's actually a balance to settle
   const exps = allExpenses[wk] ? Object.values(allExpenses[wk]) : [];
   if (!exps.length) { section.style.display = 'none'; return; }
   const p2 = {}, o2 = {};
@@ -132,10 +131,19 @@ function loadPaidStatus(wk) {
   Object.keys(MEMBERS).forEach(id => { fn2[MEMBERS[id].family] += p2[id] - o2[id]; });
   if (Math.abs(fn2[1] - fn2[2]) < 0.01) { section.style.display = 'none'; return; }
   section.style.display = 'block';
-  const saved = JSON.parse(localStorage.getItem('paidStatus_' + wk) || '{}');
-  document.getElementById('paid-status-select').value = saved.status || 'unpaid';
-  document.getElementById('paid-date-input').value   = saved.date   || '';
-  updatePaidUI(saved.status || 'unpaid', saved.date || '');
+
+  // unsubscribe previous listener before subscribing to new week
+  if (paidStatusUnsubscribe) { paidStatusUnsubscribe(); paidStatusUnsubscribe = null; }
+
+  // realtime listener on Firebase
+  paidStatusUnsubscribe = onValue(ref(db, `paidStatus/${wk}`), snap => {
+    const saved = snap.exists() ? snap.val() : {};
+    const statusEl = document.getElementById('paid-status-select');
+    const dateEl   = document.getElementById('paid-date-input');
+    if (statusEl) statusEl.value = saved.status || 'unpaid';
+    if (dateEl)   dateEl.value   = saved.date   || '';
+    updatePaidUI(saved.status || 'unpaid', saved.date || '');
+  });
 }
 
 function updatePaidUI(status, date) {
@@ -176,18 +184,16 @@ window.toggleIESplit = function(fbId, memberId, el) {
 
 window.saveInlineEdit = async function(wk, fbId) {
   const desc   = document.getElementById('ie-desc-'   + fbId).value.trim();
-  const baseAmt = parseFloat(document.getElementById('ie-amount-' + fbId).value);
-  const taxPct  = parseFloat(document.getElementById('ie-tax-' + fbId).value) || 0;
-  const amount  = taxPct > 0 ? parseFloat((baseAmt*(1+taxPct/100)).toFixed(2)) : baseAmt;
+  const amount = parseFloat(document.getElementById('ie-amount-' + fbId).value);
   const date   = document.getElementById('ie-date-'   + fbId).value;
   const cat    = document.getElementById('ie-cat-'    + fbId).value;
   const payer  = document.getElementById('ie-payer-'  + fbId).value;
   const splitBtns = document.querySelectorAll(`#ie-split-${fbId} .sp-btn`);
   const split = [...splitBtns].filter(b => b.className.includes('on-')).map(b => b.dataset.id);
-  if (!desc || !baseAmt || baseAmt <= 0 || !date || split.length === 0) {
+  if (!desc || !amount || amount <= 0 || !date || split.length === 0) {
     alert('Please fill in all fields!'); return;
   }
-  const updated = { ...allExpenses[wk][fbId], desc, amount, tax: taxPct||0, baseAmount: baseAmt, date, cat, payer, split };
+  const updated = { ...allExpenses[wk][fbId], desc, amount, date, cat, payer, split };
   const newWk = getWeekKey(date);
   if (newWk !== wk) {
     await remove(ref(db, `expenses/${wk}/${fbId}`));
@@ -241,47 +247,22 @@ window.selectAll = function() {
 };
 
 /* ─── ADD ───────────────────────────────────────── */
-window.calcTotal = function(prefix) {
-  const isIE  = prefix.startsWith('ie-');
-  const suffix = isIE ? prefix.slice(3) : '';
-  const amtEl  = document.getElementById(isIE ? 'ie-amount-'+suffix : 'inp-amount');
-  const taxEl  = document.getElementById(isIE ? 'ie-tax-'+suffix    : 'inp-tax');
-  const prevEl = document.getElementById(isIE ? prefix+'-total-preview' : 'inp-total-preview');
-  if (!prevEl) return;
-  const amt = parseFloat(amtEl?.value) || 0;
-  const tax = parseFloat(taxEl?.value) || 0;
-  if (amt > 0 && tax > 0) {
-    prevEl.textContent = '$' + (amt*(1+tax/100)).toFixed(2) + ' ('+tax+'% tax)';
-    prevEl.style.color = 'var(--f2)';
-  } else if (amt > 0) {
-    prevEl.textContent = '$' + amt.toFixed(2);
-    prevEl.style.color = 'var(--muted)';
-  } else {
-    prevEl.textContent = '—';
-    prevEl.style.color = 'var(--muted)';
-  }
-};
-
 window.addExpense = async function() {
   const desc   = document.getElementById('inp-desc').value.trim();
-  const baseAmt = parseFloat(document.getElementById('inp-amount').value);
-  const taxPct  = parseFloat(document.getElementById('inp-tax').value) || 0;
-  const amount  = taxPct > 0 ? parseFloat((baseAmt*(1+taxPct/100)).toFixed(2)) : baseAmt;
+  const amount = parseFloat(document.getElementById('inp-amount').value);
   const payer  = document.getElementById('inp-payer').value;
   const cat    = document.getElementById('inp-cat').value;
   const date   = document.getElementById('inp-date').value;
-  if (!desc || !baseAmt || baseAmt <= 0 || !payer || !date) {
+  if (!desc || !amount || amount <= 0 || !payer || !date) {
     alert('Please fill in all fields!'); return;
   }
   const wk = getWeekKey(date);
-  const expense = { desc, amount, tax: taxPct||0, baseAmount: baseAmt, payer, cat, date, split: [...selectedSplit], createdAt: Date.now() };
+  const expense = { desc, amount, payer, cat, date, split: [...selectedSplit], createdAt: Date.now() };
   await push(ref(db, `expenses/${wk}`), expense);
   document.getElementById('inp-desc').value = '';
   document.getElementById('inp-amount').value = '';
-  document.getElementById('inp-tax').value = '';
-  document.getElementById('inp-total-preview').textContent = '—';
   document.getElementById('inp-payer').value = '';
-  document.getElementById('inp-date').value = localDateStr();
+  document.getElementById('inp-date').value = new Date().toISOString().split('T')[0];
   // switch view to that week
   viewWeek = wk;
   showMainTab('list');
@@ -404,13 +385,7 @@ function renderList() {
           <div class="exp-edit" id="edit-${e.fbId}" style="display:none;">
             <div class="inline-edit-grid">
               <div class="ie-field"><label class="form-label">Description</label><textarea class="form-input ie-input" id="ie-desc-${e.fbId}" rows="2">${e.desc}</textarea></div>
-              <div class="ie-field"><label class="form-label">Amount ($)</label><input type="number" class="form-input ie-input" id="ie-amount-${e.fbId}" value="${e.baseAmount||e.amount}" min="0" step="0.01" oninput="calcTotal('ie-${e.fbId}')"/></div>
-              <div class="ie-field"><label class="form-label">Tax % <span style="font-weight:400;text-transform:none;letter-spacing:0;">(opt)</span></label>
-                <input type="number" class="form-input ie-input" id="ie-tax-${e.fbId}" value="${e.tax||''}" placeholder="e.g. 8.5" min="0" max="100" step="0.1" oninput="calcTotal('ie-${e.fbId}')"/>
-              </div>
-              <div class="ie-field"><label class="form-label">Total (with tax)</label>
-                <div class="total-preview" id="ie-${e.fbId}-total-preview">${e.tax ? '$'+(e.baseAmount||e.amount*(1/(1+e.tax/100))).toFixed(2)+' → $'+e.amount.toFixed(2) : '—'}</div>
-              </div>
+              <div class="ie-field"><label class="form-label">Amount ($)</label><input type="number" class="form-input ie-input" id="ie-amount-${e.fbId}" value="${e.amount}" min="0" step="0.01"/></div>
               <div class="ie-field"><label class="form-label">Date</label><input type="date" class="form-input ie-input" id="ie-date-${e.fbId}" value="${e.date}"/></div>
               <div class="ie-field"><label class="form-label">Category</label>
                 <select class="form-select ie-input" id="ie-cat-${e.fbId}">
@@ -619,7 +594,7 @@ window.toggleLogWeek = function(wk) {
 };
 
 /* ─── BOOT ──────────────────────────────────────── */
-document.getElementById('inp-date').value = localDateStr();
+document.getElementById('inp-date').value = new Date().toISOString().split('T')[0];
 listenExpenses();
 showMainTab('list');
 
@@ -758,7 +733,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .paid-badge.paid{background:var(--f2-light);color:var(--f2);}
 .paid-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .paid-field{display:flex;flex-direction:column;}
-.total-preview{font-size:13px;font-weight:600;color:var(--muted);padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border);min-height:38px;display:flex;align-items:center;}
 .empty-state{text-align:center;padding:3rem 1.5rem;color:var(--muted);font-size:13px;}
 .empty-state .big{font-size:30px;margin-bottom:8px;}
 
@@ -905,15 +879,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
         </div>
         <div class="form-row">
           <div><label class="form-label">Description</label><input type="text" class="form-input" id="inp-desc" placeholder="Groceries, utilities..."/></div>
-          <div><label class="form-label">Amount ($)</label><input type="number" class="form-input" id="inp-amount" placeholder="0.00" min="0" step="0.01" oninput="calcTotal('inp')"/></div>
-        </div>
-        <div class="form-row" style="margin-top:-4px;">
-          <div><label class="form-label">Tax % <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
-            <input type="number" class="form-input" id="inp-tax" placeholder="e.g. 8.5" min="0" max="100" step="0.1" oninput="calcTotal('inp')"/>
-          </div>
-          <div><label class="form-label">Total (with tax)</label>
-            <div class="total-preview" id="inp-total-preview">—</div>
-          </div>
+          <div><label class="form-label">Amount ($)</label><input type="number" class="form-input" id="inp-amount" placeholder="0.00" min="0" step="0.01"/></div>
         </div>
         <div class="form-row">
           <div><label class="form-label">Date</label><input type="date" class="form-input" id="inp-date"/></div>
