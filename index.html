@@ -67,10 +67,11 @@ const MEMBERS = {
   tram: { name:'Tram',  family:1, tag:'TT', cls:'f1', dot:'#4f7fd4', venmo:'' },
   long: { name:'Long',  family:2, tag:'LT', cls:'f2', dot:'#0d7a55', venmo:'se7enlk' },
   thao: { name:'Thao',  family:2, tag:'LT', cls:'f2', dot:'#3aab7e', venmo:'Thi-Lam-20' },
+  methao: { name:'Me Thao', family:2, tag:'LT', cls:'f2', dot:'#2d6e4e', venmo:'' },
 };
 const CAT_ICON = {'Market':'🛒','Supermarket':'🏪','Food & Drink':'🍜','Utilities':'💡','Gas':'⛽','Other':'📦'};
 
-let selectedSplit = new Set(['tri','tram','long','thao']);
+let selectedSplit = new Set(['tri','tram','long','thao','methao']);
 let currentFilter = 'all';
 let viewWeek = currentWeekKey();
 let allExpenses = {};   // { weekKey: { firebaseId: expenseObj } }
@@ -403,12 +404,13 @@ function renderList() {
                   <option value="tram" ${e.payer==='tram'?'selected':''}>Tram (TT)</option>
                   <option value="long" ${e.payer==='long'?'selected':''}>Long (LT)</option>
                   <option value="thao" ${e.payer==='thao'?'selected':''}>Thao (LT)</option>
+                  <option value="methao" ${e.payer==='methao'?'selected':''}>Me Thao (LT)</option>
                 </select>
               </div>
               <div class="ie-field ie-split">
                 <label class="form-label">Split with</label>
                 <div class="split-btns" id="ie-split-${e.fbId}">
-                  ${['tri','tram','long','thao'].map(id => {
+                  ${['tri','tram','long','thao','methao'].map(id => {
                     const m = MEMBERS[id];
                     const on = e.split.includes(id);
                     return `<button class="sp-btn ${on?'on-'+m.cls:''}" data-id="${id}" onclick="toggleIESplit('${e.fbId}','${id}',this)">${m.name}</button>`;
@@ -794,7 +796,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 <div class="topbar">
   <div style="display:flex;align-items:center;">
     <span class="topbar-title">Expenses</span>
-    <span class="topbar-sub">TT (Tri·Tram) · LT (Long·Thao)</span>
+    <span class="topbar-sub">TT (Tri·Tram) · LT (Long·Thao·Me Thao)</span>
   </div>
   <div class="nav-tabs">
     <button class="nav-btn" id="tab-add"  onclick="showMainTab('add')">+ Add</button>
@@ -873,8 +875,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
             <div class="fam-info"><div class="fn f1">TT</div><div class="fm">Tri · Tram</div></div>
           </div>
           <div class="fam-card f2">
-            <div class="fav-stack"><div class="fav f2a">L</div><div class="fav f2b">T</div></div>
-            <div class="fam-info"><div class="fn f2">LT</div><div class="fm">Long · Thao</div></div>
+            <div class="fav-stack"><div class="fav f2a">L</div><div class="fav f2b">T</div><div class="fav f2b" style="margin-left:-5px;background:#2d6e4e;">M</div></div>
+            <div class="fam-info"><div class="fn f2">LT</div><div class="fm">Long · Thao · Me Thao</div></div>
           </div>
         </div>
         <div class="form-row">
@@ -902,6 +904,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
             <option value="tram">Tram (TT)</option>
             <option value="long">Long (LT)</option>
             <option value="thao">Thao (LT)</option>
+            <option value="methao">Me Thao (LT)</option>
           </select>
         </div>
         <label class="split-label">Split with?</label>
@@ -910,6 +913,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
           <button class="sp-btn on-f1" data-id="tram" onclick="toggleSplit('tram',this)">Tram</button>
           <button class="sp-btn on-f2" data-id="long" onclick="toggleSplit('long',this)">Long</button>
           <button class="sp-btn on-f2" data-id="thao" onclick="toggleSplit('thao',this)">Thao</button>
+          <button class="sp-btn on-f2" data-id="methao" onclick="toggleSplit('methao',this)">Me Thao</button>
         </div>
         <div class="quick-split">
           <button class="qs-btn" onclick="selectFamily(1)">Only TT</button>
